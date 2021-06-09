@@ -3,10 +3,10 @@ import {
   GraphQLScalarType,
   parse,
   FragmentDefinitionNode,
-  OperationDefinitionNode,
+  ExecutableDefinitionNode,
 } from 'graphql'
 import { getDeepType } from '../info'
-import * as immutable from 'object-path-immutable'
+import immutable from 'object-path-immutable'
 
 export function addFragmentToInfo(
   info: GraphQLResolveInfo,
@@ -19,28 +19,36 @@ export function addFragmentToInfo(
     )
   }
 
-  const ast = parse(fragment)
+  const [queryNode, ...rest] = parse(fragment).definitions
 
   const deepReturnType = getDeepType(returnType)
 
   if (
-    ast.definitions[0].kind === 'FragmentDefinition' &&
-    (ast.definitions[0] as FragmentDefinitionNode).typeCondition.name.value !==
-      deepReturnType.toString()
+    queryNode.kind === 'FragmentDefinition' &&
+    queryNode.typeCondition.name.value !== deepReturnType.toString()
   ) {
     throw new Error(
       `Type ${
-        (ast.definitions[0] as FragmentDefinitionNode).typeCondition.name.value
+        queryNode.typeCondition.name.value
       } specified in fragment doesn't match return type ${deepReturnType.toString()}`,
     )
   }
 
-  return (immutable as any).update(
-    info,
-    ['fieldNodes', 0, 'selectionSet', 'selections'],
-    selections =>
-      selections.concat(
-        (ast.definitions[0] as OperationDefinitionNode).selectionSet.selections,
-      ),
+  const fragments = Object.fromEntries(
+    rest
+      .filter(
+        (def): def is FragmentDefinitionNode =>
+          def.kind === 'FragmentDefinition',
+      )
+      .map(d => [d.name.value, d]),
   )
+
+  return immutable(info)
+    .update('fieldNodes.0.selectionSet.selections', selections =>
+      selections.concat(
+        (queryNode as ExecutableDefinitionNode).selectionSet.selections,
+      ),
+    )
+    .assign('fragments', fragments as any)
+    .value()
 }

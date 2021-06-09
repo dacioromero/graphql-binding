@@ -15,6 +15,7 @@ import {
   isObjectType,
   isInterfaceType,
   isScalarType,
+  FragmentDefinitionNode,
 } from 'graphql'
 
 import { Operation } from './types'
@@ -103,15 +104,24 @@ export function buildInfoFromFragment(
 ): GraphQLResolveInfo {
   const type = getTypeForRootFieldName(rootFieldName, operation, schema)
   const namedType = getNamedType(type)!
+  const [
+    selectionSet,
+    fragments,
+  ] = extractQuerySelectionSetAndFragmentDefinitions(
+    query,
+    namedType.name!,
+    schema,
+  )
+
   const fieldNode: FieldNode = {
     kind: 'Field',
     name: { kind: 'Name', value: rootFieldName },
-    selectionSet: extractQuerySelectionSet(query, namedType.name!, schema),
+    selectionSet,
   }
 
   return {
     fieldNodes: [fieldNode],
-    fragments: {},
+    fragments: Object.fromEntries(fragments.map(f => [f.name.value, f])),
     schema,
     fieldName: rootFieldName,
     returnType: type,
@@ -128,12 +138,12 @@ export function buildInfoFromFragment(
   }
 }
 
-function extractQuerySelectionSet(
+function extractQuerySelectionSetAndFragmentDefinitions(
   query: string,
   typeName: string,
   schema: GraphQLSchema,
-): SelectionSetNode {
-  if (!query.startsWith('fragment')) {
+): [SelectionSetNode, FragmentDefinitionNode[]] {
+  if (!query.trimLeft().startsWith('fragment')) {
     query = `fragment tmp on ${typeName} ${query}`
   }
   const document = parse(query)
@@ -144,12 +154,17 @@ function extractQuerySelectionSet(
     throw errors
   }
 
-  const queryNode = document.definitions[0]
+  const [queryNode, ...rest] = document.definitions
   if (!queryNode || queryNode.kind !== 'FragmentDefinition') {
     throw new Error(`Invalid query: ${query}`)
   }
 
-  return queryNode.selectionSet
+  return [
+    queryNode.selectionSet,
+    rest.filter(
+      (def): def is FragmentDefinitionNode => def.kind === 'FragmentDefinition',
+    ),
+  ]
 }
 
 /**
